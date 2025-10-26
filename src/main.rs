@@ -55,22 +55,22 @@ impl State {
 
 fn main() {
     let args = Args::parse();
-    let mut term = Term::new();
     let mut do_run = true;
     let mut do_render = true;
     let mut do_search = false;
 
-    term.clear_all();
-
     let directory = Path::new(&args.directory);
     let repo = match Repository::open(directory) {
         Ok(repo) => repo,
-        Err(_) => {
+        Err(err) => {
+            eprintln!("fatal: {}", err.message());
             exit(1);
         }
     };
     let mut state = State::new(repo);
 
+    let mut term = Term::new();
+    term.clear_all();
     while do_run {
         if do_render {
             render_branches(&mut term, &mut state, &args);
