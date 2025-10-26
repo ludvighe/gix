@@ -31,6 +31,9 @@ impl Term {
             .execute(crossterm::terminal::EnterAlternateScreen)
             .unwrap();
         stdout.execute(crossterm::cursor::Hide).unwrap();
+        stdout
+            .execute(crossterm::terminal::DisableLineWrap)
+            .unwrap();
         Term { stdout }
     }
 
@@ -39,6 +42,9 @@ impl Term {
         self.stdout.execute(crossterm::cursor::Show).unwrap();
         self.stdout
             .execute(crossterm::terminal::LeaveAlternateScreen)
+            .unwrap();
+        self.stdout
+            .execute(crossterm::terminal::EnableLineWrap)
             .unwrap();
         disable_raw_mode().unwrap();
     }

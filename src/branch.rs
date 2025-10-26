@@ -17,47 +17,60 @@ impl BranchItem {
 
 pub fn get_branches(repo: &Repository) -> Vec<BranchItem> {
     let mut items = Vec::new();
-    if let Ok(mut it) = repo.branches(Some(BranchType::Local)) {
-        while let Some(Ok((branch, _))) = it.next() {
-            if let Ok(name_opt) = branch.name() {
-                let name = name_opt.unwrap_or_default().to_string();
-                let commit = branch.get().peel_to_commit().ok();
-                let oid_full = commit
-                    .as_ref()
-                    .map(|c| c.id().to_string())
-                    .unwrap_or_default();
-                let summary = commit
-                    .as_ref()
-                    .and_then(|c| c.summary().map(|s| s.to_string()))
-                    .unwrap_or_default();
 
-                let cfg = repo.config().ok();
-                let remote_key = format!("branch.{}.remote", name);
-                let merge_key = format!("branch.{}.merge", name);
-                let has_cfg = cfg
-                    .as_ref()
-                    .map(|c| c.get_string(&remote_key).is_ok() && c.get_string(&merge_key).is_ok())
-                    .unwrap_or(false);
+    for branch_type in [BranchType::Local, BranchType::Remote] {
+        if let Ok(mut it) = repo.branches(Some(branch_type)) {
+            while let Some(Ok((branch, _))) = it.next() {
+                if let Ok(name_opt) = branch.name() {
+                    let mut name = name_opt.unwrap_or_default().to_string();
 
-                let upstream_res = branch.upstream();
-                let has_upstream = upstream_res.is_ok();
-                let is_gone = has_cfg
-                    && matches!(
-                        upstream_res.err().map(|e| e.code()),
-                        Some(ErrorCode::NotFound)
-                    );
+                    if branch_type == BranchType::Remote {
+                        if let Some((remote, branch_name)) = name.split_once('/') {
+                            name = format!("{remote}/{branch_name}");
+                        }
+                    }
 
-                items.push(BranchItem {
-                    name,
-                    oid: oid_full,
-                    summary,
-                    is_head: branch.is_head(),
-                    has_upstream,
-                    is_gone,
-                });
+                    let commit = branch.get().peel_to_commit().ok();
+                    let oid_full = commit
+                        .as_ref()
+                        .map(|c| c.id().to_string())
+                        .unwrap_or_default();
+                    let summary = commit
+                        .as_ref()
+                        .and_then(|c| c.summary().map(|s| s.to_string()))
+                        .unwrap_or_default();
+
+                    let cfg = repo.config().ok();
+                    let remote_key = format!("branch.{}.remote", name);
+                    let merge_key = format!("branch.{}.merge", name);
+                    let has_cfg = cfg
+                        .as_ref()
+                        .map(|c| {
+                            c.get_string(&remote_key).is_ok() && c.get_string(&merge_key).is_ok()
+                        })
+                        .unwrap_or(false);
+
+                    let upstream_res = branch.upstream();
+                    let has_upstream = upstream_res.is_ok();
+                    let is_gone = has_cfg
+                        && matches!(
+                            upstream_res.err().map(|e| e.code()),
+                            Some(ErrorCode::NotFound)
+                        );
+
+                    items.push(BranchItem {
+                        name,
+                        oid: oid_full,
+                        summary,
+                        is_head: branch.is_head(),
+                        has_upstream,
+                        is_gone,
+                    });
+                }
             }
         }
     }
+
     items
 }
 

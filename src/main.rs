@@ -164,7 +164,8 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
         }
         n
     };
-    let max_y = (Term::size().y - 1) as usize - PADDING;
+    let term_size = Term::size();
+    let max_y = (term_size.y - 1) as usize - PADDING;
     term.clear_all();
     if state.branches.len() == 0 {
         term.set_fg_color(Color::Grey);
@@ -176,6 +177,9 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
     }
 
     for (i, branch) in state.branches.iter().enumerate() {
+        if i > term_size.y as usize - PADDING * 2 {
+            break;
+        }
         let prefix = if i == state.selected_row { ">" } else { " " };
         if i == state.selected_row {
             term.set_attribute(Attribute::Bold);
