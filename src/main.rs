@@ -1,5 +1,5 @@
 use crate::{
-    branch::{BranchItem, checkout_branch, get_branches},
+    branch::{BranchItem, BranchQuery, checkout_branch, query_branches},
     term::{Term, Vec2},
 };
 use clap::Parser;
@@ -16,9 +16,15 @@ mod term;
 const EVENT_POLL_TIMEOUT_MS: u64 = 10_000;
 const PADDING: usize = 2;
 
+// Shortcuts:
+//   "r" = toggle between local/local-and-remote/remote branches
+//   "/" = search branches
+//       -> "enter" = accept search
+//       -> "esc"   = cancel search
+
 /// Git tui tool
 #[derive(Parser, Debug, Default)]
-#[command(version, about, long_about = None)]
+#[command(version)]
 struct Args {
     /// Path to repository
     #[arg(short, long, default_value = ".")]
@@ -27,6 +33,10 @@ struct Args {
     /// Latest commit summary max length
     #[arg(short, long, default_value_t = 72)]
     summary_length: usize,
+
+    /// Branch name max length
+    #[arg(short, long, default_value_t = 42)]
+    branch_name_length: usize,
 
     /// Render debug info
     #[arg(short = 'D', long, action = clap::ArgAction::SetTrue)]
@@ -39,6 +49,7 @@ struct State {
     branches: Vec<BranchItem>,
     selected_row: usize,
     search_string: String,
+    branch_query: BranchQuery,
 }
 
 impl State {
@@ -49,6 +60,7 @@ impl State {
             branches: Vec::new(),
             selected_row: 0,
             search_string: String::new(),
+            branch_query: BranchQuery::Local,
         }
     }
 }
@@ -59,7 +71,7 @@ fn main() {
     let mut do_render = true;
     let mut do_search = false;
 
-    let directory = Path::new(&args.directory);
+    let directory = Path::new(&args.directory).canonicalize().unwrap();
     let repo = match Repository::open(directory) {
         Ok(repo) => repo,
         Err(err) => {
@@ -125,21 +137,22 @@ fn main() {
 fn render_debug_info(term: &mut Term, state: &mut State, args: &Args) {
     state.renders += 1;
     let term_size = Term::size();
-    let x = term_size.x - 20 - PADDING as u16;
+    let x = term_size.x - 24 - PADDING as u16;
     let y = term_size.y - 1 - PADDING as u16;
     term.draw_text_bubble(
-        Vec2::new(x, y - 2),
+        Vec2::new(x, y - 3),
         format!(
-            "Renders: {}\nSum len: {}\nSize:    {}",
+            "Renders:    {}\nSize:       {}\nSum len:    {}\nBranch len: {}",
             state.renders,
+            Term::size(),
             args.summary_length,
-            Term::size()
+            args.branch_name_length,
         ),
     );
 }
 
 fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
-    state.branches = get_branches(&state.repo)
+    state.branches = query_branches(&state.repo, &state.branch_query)
         .into_iter()
         .filter(|b| {
             if state.search_string.is_empty() {
@@ -158,16 +171,23 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
         let mut n = 0;
         for branch in state.branches.iter() {
             let challenge = branch.name.len();
+            if challenge >= args.branch_name_length {
+                n = args.branch_name_length + 3;
+                break;
+            }
             if challenge > n {
                 n = challenge;
             }
         }
         n
     };
+    let longest_summary = args.summary_length + 6;
+
     let term_size = Term::size();
     let max_y = (term_size.y - 1) as usize - PADDING;
+    let n_branches = state.branches.len();
     term.clear_all();
-    if state.branches.len() == 0 {
+    if n_branches == 0 {
         term.set_fg_color(Color::Grey);
         term.set_attribute(Attribute::Dim);
         term.write_text(Vec2::from((PADDING, max_y)), "> No branches found");
@@ -177,7 +197,15 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
     }
 
     for (i, branch) in state.branches.iter().enumerate() {
-        if i > term_size.y as usize - PADDING * 2 {
+        if i > term_size.y as usize - PADDING * 2 - 1 {
+            term.set_fg_color(Color::Grey);
+            term.set_attribute(Attribute::Dim);
+            term.write_text(
+                Vec2::from((PADDING + 2, max_y - i)),
+                format!("... {} truncated", n_branches - i - 1),
+            );
+            term.reset_attributes();
+            term.reset_colors();
             break;
         }
         let prefix = if i == state.selected_row { ">" } else { " " };
@@ -191,19 +219,28 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
             term.set_attribute(Attribute::CrossedOut);
         }
 
-        let branch_summary = {
-            let s = branch.summary.chars().take(args.summary_length).collect();
-            if branch.summary.chars().count() > args.summary_length {
+        let branch_name = {
+            let s = branch.name.chars().take(args.branch_name_length).collect();
+            if branch.name.chars().count() > args.branch_name_length {
                 format!("{s}...")
             } else {
                 s
             }
         };
+
+        let branch_summary = {
+            let summary: String = branch.summary.chars().take(args.summary_length).collect();
+            if branch.summary.chars().count() > args.summary_length {
+                format!("'{summary}...'")
+            } else {
+                format!("'{summary}'")
+            }
+        };
         let main_str = format!(
-            "{prefix} {} {:<width$}  '{branch_summary}'",
+            "{prefix} {} {branch_name:<name_width$}  {branch_summary:<summary_width$}",
             branch.short_oid(),
-            branch.name,
-            width = longest_name
+            name_width = longest_name,
+            summary_width = longest_summary
         );
         let mut cursor_x = PADDING + main_str.len();
 
@@ -213,12 +250,12 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
         term.set_attribute(Attribute::Dim);
 
         if !branch.has_upstream {
-            let msg = "\t[no upstream]";
+            let msg = " [no upstream]";
             term.write_text(Vec2::from((cursor_x, max_y - i)), msg);
             cursor_x += msg.len();
         }
         if branch.is_gone {
-            let msg = "\t[gone]";
+            let msg = " [gone]";
             term.write_text(Vec2::from((cursor_x, max_y - i)), msg);
         }
 
@@ -295,6 +332,17 @@ fn handle_branch_event(
             ..
         }) => {
             *do_search = true;
+            *do_render = true;
+        }
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('r'),
+            ..
+        }) => {
+            match state.branch_query {
+                BranchQuery::Local => state.branch_query = BranchQuery::LocalAndRemote,
+                BranchQuery::LocalAndRemote => state.branch_query = BranchQuery::Remote,
+                BranchQuery::Remote => state.branch_query = BranchQuery::Local,
+            };
             *do_render = true;
         }
 
