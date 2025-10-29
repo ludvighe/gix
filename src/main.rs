@@ -50,6 +50,7 @@ struct State {
     selected_row: usize,
     search_string: String,
     branch_query: BranchQuery,
+    error: Option<String>,
 }
 
 impl State {
@@ -61,6 +62,7 @@ impl State {
             selected_row: 0,
             search_string: String::new(),
             branch_query: BranchQuery::Local,
+            error: None,
         }
     }
 }
@@ -86,8 +88,8 @@ fn main() {
     while do_run {
         if do_render {
             render_branches(&mut term, &mut state, &args);
+            let max_y = (Term::size().y) as usize - PADDING;
             if do_search || !state.search_string.is_empty() {
-                let max_y = (Term::size().y) as usize - PADDING;
                 term.write_text(
                     Vec2::from((PADDING, max_y)),
                     format!("/ {}", state.search_string),
@@ -96,6 +98,9 @@ fn main() {
 
             if args.debug {
                 render_debug_info(&mut term, &mut state, &args);
+            }
+            if let Some(error) = state.error.take() {
+                term.write_text(Vec2::from((PADDING, max_y)), error);
             }
             do_render = false;
         }
@@ -323,7 +328,10 @@ fn handle_branch_event(
         }) => {
             if state.branches.len() != 0 {
                 let selected_branch_name = &state.branches[state.selected_row].name;
-                checkout_branch(&state.repo, selected_branch_name).unwrap();
+
+                if let Err(e) = checkout_branch(&state.repo, selected_branch_name) {
+                    state.error = Some(e.to_string());
+                }
                 *do_render = true;
             }
         }
