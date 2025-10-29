@@ -169,8 +169,15 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
         })
         .collect();
 
-    if state.selected_row > state.branches.len() {
-        state.selected_row = state.branches.len() - 1
+    let n_branches = state.branches.len();
+    if n_branches == 0 {
+        state.selected_row = 0;
+    } else if state.selected_row >= n_branches {
+        state.selected_row = n_branches - 1;
+    }
+
+    if state.selected_row > n_branches {
+        state.selected_row = n_branches - 1
     }
     let longest_name = {
         let mut n = 0;
@@ -190,7 +197,6 @@ fn render_branches(term: &mut Term, state: &mut State, args: &Args) {
 
     let term_size = Term::size();
     let max_y = (term_size.y - 1) as usize - PADDING;
-    let n_branches = state.branches.len();
     term.clear_all();
     if n_branches == 0 {
         term.set_fg_color(Color::Grey);
